@@ -1,0 +1,1146 @@
+---
+title: "Codes used in Wang et al. 2019"
+author: "Huanwei Wang <huanwei.wang@uq.edu.au>"
+date: "11/08/2020"
+output:
+    html_document:
+        toc: TRUE
+        code_folding: "hide"
+---
+
+This rmarkdown file contains the codes used in paper: [Wang et al. Science Advances, 2019](https://advances.sciencemag.org/content/5/8/eaaw3538/tab-figures-data).
+
+### Introduction: Illustration plot shown in Figure 1
+
+```{r, eval=FALSE}
+png("QTL_vs_vQTL.png", width = 8, height = 4, units="in", res=300)
+layout(matrix(1:4,1,4))
+set.seed(1)
+n = 1000
+p = 0.3
+g = rbinom(n, 2, p)
+e = rnorm(n)
+epsilon = rnorm(n)
+b0 = 0; b1 = 3; b2 = 0; b3 = 2
+y_ge = b0 + b1*g + b2*e + b3*g*e + epsilon
+plot(jitter(g), y_ge, xaxt="n", xlab="", ylab="", col=g+2)
+title(main="GEI with QTL effect", xlab="Genotype", ylab="Phenotype",cex.main=1)
+axis(side=1, at=0:2,labels=c("AA","AB","BB"),cex.lab=.9)
+
+
+b0 = 0; b1 = 0; b2 = 0; b3 = 2
+y_ge = b0 + b1*g + b2*e + b3*g*e + epsilon
+plot(jitter(g), y_ge, xaxt="n", xlab="", ylab="", col=g+2)
+title(main="GEI without QTL effect", xlab="Genotype", ylab="Phenotype",cex.main=1)
+axis(side=1, at=0:2,labels=c("AA","AB","BB"),cex.lab=.9)
+
+b0 = 0; b1 = 2; b2 = 0; b3 = 0
+y_qtl = b0 + b1*g + b2*e + b3*g*e + epsilon
+plot(jitter(g), y_qtl, xaxt="n", xlab="", ylab="", col=g+2)
+title(main="QTL only", xlab="Genotype", ylab="Phenotype",cex.main=1)
+axis(side=1, at=0:2,labels=c("AA","AB","BB"),cex.lab=.9)
+
+b0 = 0; b1 = 0; beta1 = 3
+epsilon_vqtl = epsilon * sqrt(beta1*g + 1)
+y_vqtl = b0 + b1*g + epsilon_vqtl
+plot(jitter(g), y_vqtl, xaxt='n',xlab="",ylab="", col=g+2)
+title(main="vQTL only", xlab="Genotype", ylab="Phenotype",cex.main = 1)
+axis(side=1, at=0:2,labels=c("AA","AB","BB"),cex.lab=.9)
+
+dev.off()
+```
+
+
+### Results: Simulations
+
+#### single-SNP model shown in Figure S1
+
+Run the simulation
+
+```{r, eval=FALSE}
+## load packages and common functions
+source("comfun_file.R")
+
+## init parametes
+n = 10000; rep = 1000; minmaf = 0.05; maxmaf = 0.5; m = 1; rsq_g = 0.1; rsq_e = 0.9
+
+## parameters
+args = commandArgs(TRUE)
+method = args[1]    ### method of test
+trans = args[2]     ### transformation
+for(type in c("both", "nei", "mean", "var")){      ### the mean/variance effect of the SNP
+for(dis in c(1, 2, 4, 5, 7)){
+
+## output
+outfolder = "results/sim_single/"
+mydircreate(outfolder)
+out = paste(outfolder, "sim_single_dis", dis, "_method-", method, "_trans-", trans, "_type-", type, ".txt", sep="")
+
+## do the simulation
+set.seed(2017)
+ps = c()
+for(repindex in 1:rep){
+### simulate the genotype and phenotype
+geno = simSNP(m, n, minmaf, maxmaf)
+genostd = geno$genostd
+geno012 = geno$geno012
+if(type == "nei"){b_g = 0; f_g = 0
+}else if(type =="both"){b_g = rnorm(1); f_g = rnorm(1)
+}else if(type == "mean"){b_g = rnorm(1); f_g = 0
+}else if(type == "var"){b_g = 0; f_g = rnorm(1)}
+g = genostd * b_g
+e = grt_err(n, 1, dis) * sqrt(exp(genostd * f_g))
+y = numscale(g)*sqrt(rsq_g) + numscale(e)*sqrt(rsq_e)
+
+### transformation
+if(trans == "raw"){y = y
+}else if(trans == "log"){y = log(y+20)
+}else if(trans == "int"){y = int(y)
+}else if(trans == "sq"){ y = y^2
+}else if(trans == "cub"){ y = y^3
+}else{stop("incorrect trans variable")}
+y = ifelse(abs(y-mean(y, na.rm=T))<5*sd(y, na.rm=T), y, NA )
+
+### vQTL test
+p = vqtl_test(geno012, y, method)
+ps = rbind(ps, data.frame(type=type, trans=trans, dis=dis, repindex=repindex, method=method, p=p))
+}
+
+write.table(ps, file=out, sep="\t", quote=F, row.names=F, col.names=F)
+}}
+```
+
+Plot the figure
+
+```{r, eval=FALSE}
+source("comfun_file.R")
+
+outfolder = "results/plot/"
+mydircreate(outfolder)
+
+## read simulated data
+simfiles = list.files(path="results/sim_single/", pattern="sim_single*", full.names=T)
+data = fread_batch(simfiles)
+names(data) = c("type", "trans", "dis", "repindex", "method", "p")
+data$method = as.factor(data$method); levels(data$method) = c("Bart","Lev", "FK", "DGLM")
+data$type = as.factor(data$type); data$type = factor(data$type, levels = levels(data$type)[c(3,2,4,1)])
+data$trans = as.factor(data$trans); data$trans = factor(data$trans, levels = levels(data$trans)[c(4,3,2,5,1)])
+
+## calculate the FPR/Power
+pr_comparemtd = data %>% filter(trans=="raw") %>% group_by(type, trans, dis, method) %>% summarise(pr = fpr(p))
+pr_compareprc = data %>% filter(method=="Lev") %>% group_by(type, trans, dis, method) %>% summarise(pr = fpr(p))
+
+## plotting
+library(ggplot2)
+p = ggplot(pr_comparemtd, aes(x = as.character(dis), y=pr, fill=as.character(dis))) + facet_grid(type~method) +
+    geom_bar(stat="identity") + ylab("Positive Rate") + xlab("categories") + ggtitle("Single SNP model") +
+    scale_fill_brewer(name="distribution",labels=c("normal","t,df=10","t,df=3","chisq,df=15","chisq,df=1")) +
+    theme(axis.text.x = element_blank()) + geom_hline(yintercept = 0.05)
+
+p2 = ggplot(pr_compareprc, aes(x = as.character(dis), y=pr, fill=as.character(dis))) + facet_grid(type~trans) +
+    geom_bar(stat="identity") + ylab("Positive Rate") + xlab("categories") + ggtitle("Single SNP model") +
+    scale_fill_brewer(name="distribution",labels=c("normal","t,df=10","t,df=3","chisq,df=15","chisq,df=1")) +
+    theme(axis.text.x = element_blank()) + geom_hline(yintercept = 0.05)
+
+#ggsave(paste(outfolder, "sim-single_methodcompare.pdf", sep=""),p,device="pdf",height=4,width=5)
+ggsave(paste(outfolder, "sim-single_methodprocess.pdf", sep=""),p2,device="pdf",height=4,width=5)
+```
+
+#### multiple-SNP model shown in Figure 2
+
+Run the simulation
+
+```{r, eval=FALSE}
+## load packages and common functions
+source("comfun_file.R")
+
+## init parametes
+rep = 1000; minmaf = 0.05; maxmaf = 0.5; rsq_c = 0.2; rsq_g = 0.4; rsq_e = 0.4
+
+## parameters
+args = commandArgs(TRUE)
+method = args[1]    ### method of test
+trans = args[2]     ### transformation
+n = 10000
+#dis = as.integer(args[3])       ### distribution of error term: 1,2,4,5,7
+#mscalar = as.integer(args[4])  ### the scalar for the number of SNPs
+for(dis in c(1,2,4,5,7)){
+for(mscalar in c(1, 10, 20)){
+m = mscalar*4
+
+### output
+outfolder="results/sim_multi/"
+mydircreate(outfolder)
+out = paste(outfolder, "sim_multi_dis", dis, "_method-", method, "_trans-", trans, "_no5sd_mscalar", mscalar, "_sample",n,".txt", sep="")
+
+## do the simulation
+set.seed(2017)
+ps = c()
+for(repindex in 1:rep){
+## covariance: age(20-60) and sex(0,1)
+age = as.integer(runif(n,20,60))
+agestd = (age-40)/sqrt(40^2/12)
+sex = rbinom(n,1,0.5)
+sexstd = (sex - 0.5)/sqrt(0.25)
+covastd = cbind(agestd, sexstd)
+b_cova = rnorm(2)
+f_cova = rnorm(2)
+### simulate the genotype and phenotype
+geno = simSNP(m, n, minmaf, maxmaf)
+genostd = geno$genostd
+geno012 = geno$geno012
+b_snp = c(rep(0,mscalar),rep(0,mscalar),rnorm(mscalar),rnorm(mscalar))
+f_snp = c(rep(0,mscalar),rnorm(mscalar),rep(0,mscalar),rnorm(mscalar))
+### simulate the phenotype
+c = covastd %*% b_cova
+g = genostd %*% b_snp
+e = grt_err(n, 1, dis) * sqrt(exp(covastd %*% f_cova + genostd %*% f_snp))
+y = numscale(c)*sqrt(rsq_c) + numscale(g)*sqrt(rsq_g) + numscale(e)*sqrt(rsq_e)
+
+### transformation
+if(trans == "raw"){y = y
+}else if(trans == "log"){y = log(resid(lm(y~age+sex))+20)
+}else if(trans == "int"){y = int(resid(lm(y~age+sex)))
+}else if(trans == "crt"){y = resid(lm(y~age+sex))
+}else if(trans == "sq"){y = resid(lm(y~age+sex))^2
+}else if(trans == "cub"){y = resid(lm(y~age+sex))^3
+}else(stop("incorrect trans variable"))
+#y = ifelse(abs(y-mean(y,na.rm=T))<5*sd(y,na.rm=T), y, NA )
+
+
+### vQTL test
+data = data.frame(age,sex,geno012,y=y)
+p = data %>% summarise_at(vars(paste("SNP", 1:m, sep="")),funs(vqtl_test(.,y,method)))
+ps = rbind(ps, data.frame(m=m, trans=trans, dis=dis, repindex=repindex, method=method, p))
+}
+
+write.table(ps, file=out, sep="\t", quote=F, row.names=F, col.names=T)
+}}
+```
+
+Plot the figure
+
+```{r, eval=FALSE}
+source("comfun_file.R")
+mydircreate("results/plot/")
+
+methodcompare = function(mscalar,n){
+m = mscalar*4; rep=1000
+## read simulated data
+res = c()
+for(dis in c(1,2,4,5,7)){
+for(method in c(1,3,4,6)){
+for(trans in c("raw")){
+simfile = paste("results/sim_multi/sim_multi_dis",dis,"_method-",method,"_trans-",trans,"_mscalar",mscalar,"_sample", n, ".txt",sep="")
+data = fread(simfile)
+res = rbind(res, data.frame(dis, method, trans, mscalar,
+    nei = narmsum(apply(data %>% select(paste("SNP",1:mscalar,sep=""))<(0.05/m), 1 , narmsum) != 0)/rep,
+    var = narmsum(unlist(data %>% select(paste("SNP", (mscalar+1):(2*mscalar), sep="")) < (0.05/m))) / rep / mscalar,
+    mean = narmsum(apply(data %>% select(paste("SNP", (2*mscalar+1):(3*mscalar), sep=""))<(0.05/m), 1 , narmsum) != 0)/rep,
+    both= narmsum(unlist(data %>% select(paste("SNP", (3*mscalar+1):(4*mscalar), sep="")) < (0.05/m))) / rep / mscalar))
+}}}
+res = res %>% gather(nei, var, mean, both, key="type",value="pr")
+res$method = as.factor(res$method); levels(res$method) = c("Bart","Lev","FK", "DGLM")
+res$type = as.factor(res$type); res$type = factor(res$type, levels = levels(res$type)[c(3,2,4,1)])
+
+## plotting
+library(ggplot2)
+p = ggplot(res, aes(x = as.character(dis), y=pr, fill=as.character(dis))) +
+    geom_bar(stat="identity") + ylab("Positive Rate") + xlab("categories") + ggtitle(paste("m = ", 4*mscalar,", n = ", n,sep="")) +
+    facet_grid(type~method) + scale_fill_brewer(name="distribution",labels=c("normal","t,df=10","t,df=3","chisq,df=15","chisq,df=1")) +
+    theme(axis.text.x = element_blank()) + ylim(0,1) + geom_hline(yintercept = 0.05)
+return(p)
+}
+
+processcompare = function(mscalar, n){
+m = mscalar*4; rep=1000
+## read simulated data
+res = c()
+for(dis in c(1,2,4,5,7)){
+for(method in c(3)){
+#for(trans in c("raw", "log", "int", "crt")){
+for(trans in c("raw", "log", "int", "crt","sq", "cub")){
+simfile = paste("results/sim_multi/sim_multi_dis",dis,"_method-",method,"_trans-",trans,"_no5sd_mscalar",mscalar,"_sample",n,".txt",sep="")
+data = fread(simfile)
+res = rbind(res, data.frame(dis, method, trans, mscalar,
+    nei = fpr(unlist(data %>% select(paste("SNP",1:mscalar,sep="")))),
+    var = fpr(unlist(data %>% select(paste("SNP",(mscalar+1):(2*mscalar),sep="")))),
+    mean = fpr(unlist(data %>% select(paste("SNP",(2*mscalar+1):(3*mscalar),sep="")))),
+    both = fpr(unlist(data %>% select(paste("SNP",(3*mscalar+1):(4*mscalar),sep=""))))))
+#    nei = narmsum(apply(data %>% select(paste("SNP",1:mscalar,sep=""))<(0.05/m), 1 , narmsum) != 0)/rep,
+#    var = narmsum(unlist(data %>% select(paste("SNP", (mscalar+1):(2*mscalar), sep="")) < (0.05/m))) / rep / mscalar,
+#    mean = narmsum(apply(data %>% select(paste("SNP", (2*mscalar+1):(3*mscalar), sep=""))<(0.05/m), 1 , narmsum) != 0)/rep,
+#    both= narmsum(unlist(data %>% select(paste("SNP", (3*mscalar+1):(4*mscalar), sep="")) < (0.05/m))) / rep / mscalar))
+}}}
+res = res %>% gather(nei, var, mean, both, key="type",value="pr")
+res$type = as.factor(res$type); res$type = factor(res$type,levels(res$type)[c(3,2,4,1)])
+res$trans = as.factor(res$trans); res$trans = factor(res$trans,levels(res$trans)[c(1,4,3,2,5,6)])
+
+## plotting
+library(ggplot2)
+p = ggplot(res, aes(x = as.character(dis), y=pr, fill=as.character(dis))) +
+    geom_bar(stat="identity") + ylab("Positive Rate") + xlab("categories") + ggtitle(paste("m = ", 4*mscalar,", n = ", n,sep="")) +
+    facet_grid(type~trans) +
+    scale_fill_brewer(name="distribution",labels=c("normal","t,df=10","t,df=3","chisq,df=15","chisq,df=1")) +
+    theme(axis.text.x = element_blank()) + ylim(0,1) + geom_hline(yintercept = 0.05)
+return(p)
+}
+
+library(ggplot2); library(gridExtra)
+#ggsave(file="results/plot/sim-multiple_methodcompare.pdf",arrangeGrob(methodcompare(1, 10000), methodcompare(10, 10000), methodcompare(20,10000 ),nrow=1),height=4,width=12,device="pdf")
+ggsave(file="results/plot/sim-multiple_processcompare.pdf",arrangeGrob(processcompare(1, 10000), processcompare(10, 10000), processcompare(20, 10000),nrow=1),height=4,width=12,device="pdf")
+
+```
+
+#### Simulations to compare with Young et al. method shown in Figure S6
+
+Run the simulation
+
+```{r, eval=FALSE}
+## load packages and common functions
+source("comfun_file.R")
+library(BEDMatrix)
+
+## init parametes
+n=10000; rsq_c = 0.2; rsq_g = 0.4; rsq_e = 0.4; rep=1000
+
+### input
+args = commandArgs(trailingOnly=TRUE)
+dis = args[1]     ### dis: 1 2 4 5 7
+transmtd = args[2]       ### "lev_crt", "hlm_int"
+method = strsplit(transmtd, "_")[[1]][1]
+trans = strsplit(transmtd, "_")[[1]][2]
+mscalar = as.integer(args[3]) ### mscalar: 1, 10, 20
+m=mscalar*4
+use5sd = FALSE
+
+### output
+outfolder="results/sim/"
+mydircreate(outfolder)
+out = paste(outfolder, "sim_multi_dis", dis, "_method-", method, "_trans-", trans, "_mscalar", mscalar,"_sample",n, "_5sdstep", use5sd, sep="")
+
+set.seed(1107)
+ps = c()
+for(repindex in 1:rep){
+out_repindex = paste(out, "_rep", repindex, sep="")
+seed=paste("1022", sprintf("%04d", repindex), sep="")
+## covariates: age(20-60) and sex(0,1)
+age = as.integer(runif(n,20,60))
+agestd = (age-40)/sqrt(40^2/12)
+sex = rbinom(n,1,0.5)
+sexstd = (sex - 0.5)/sqrt(0.25)
+covastd = cbind(agestd, sexstd)
+b_cova = rnorm(2)
+f_cova = rnorm(2)
+### simulate genotype
+write.table(paste(m, " SNP 0.05 0.95  1.00 1.00", sep=""), paste(out_repindex, ".sim", sep=""), quote=F, row.names=F, col.names=F)
+cmd_simgeno = paste("plink --simulate ", out_repindex, ".sim --make-bed --out ", out_repindex, " --seed ", seed, " --simulate-ncontrols ", sprintf("%d",n), " --simulate-ncases 0 --noweb", sep="")
+system(cmd_simgeno)
+geno012 = as.matrix(BEDMatrix(out_repindex))
+genostd = apply(geno012, 2, function(x) as.numeric(scale(x)))
+b_snp = c(rep(0,mscalar),rep(0,mscalar),rnorm(mscalar),rnorm(mscalar))
+f_snp = c(rep(0,mscalar),rnorm(mscalar),rep(0,mscalar),rnorm(mscalar))
+### simulate phenotype
+c = covastd %*% b_cova
+g = genostd %*% b_snp
+e = grt_err(n, 1, dis) * sqrt(exp(covastd %*% f_cova + genostd %*% f_snp))
+y = numscale(c)*sqrt(rsq_c) + numscale(g)*sqrt(rsq_g) + numscale(e)*sqrt(rsq_e)
+
+### transformation
+if(trans == "raw"){y = y
+}else if(trans == "log"){y = log(y+20)
+}else if(trans == "int"){y = int(y)
+}else if(trans == "crt"){y = resid(lm(y~age+sex))}
+
+if(use5sd){y=ifelse(abs(y-mean(y, na.rm=T))>=5*sd(y, na.rm=T),NA,y)}
+
+if(method=="hlm"){
+### hlm
+fam=read.table(paste(out_repindex, ".fam", sep=""),stringsAsFactors=F)
+write.table(data.frame(fam[,1:2],y),paste(out_repindex, ".pheno",sep=""),quote=F,row.names=F,col.names=F)
+write.table(data.frame(fam[,1:2],age=age, sex=sex), paste(out_repindex, ".cova", sep=""), quote=F, row.names=F, col.names=F)
+cmd=paste("python hlmm/bin/hlmm_chr.py ", out_repindex, ".bed 0 ", m," ", out_repindex, ".pheno ", out_repindex, " --mean_covar ", out_repindex, ".cova", " --var_covar ", out_repindex, ".cova", sep="")
+system(cmd)
+results=read.table(paste(out_repindex, '.models.gz', sep=""),header=T,stringsAsFactors=F)
+source('hlmm/examples/estimate_dispersion_effects.R')
+p = 10^(-results$dispersion_pval)
+}else if(method=="lev"){
+### levene's
+data = data.frame(cbind(geno012, y))
+p = as.numeric(unlist(data %>% summarise_at(vars(colnames(data)[grep("SNP",colnames(data))]), funs(vqtl_test(.,y,3)))))
+}
+ps = rbind(ps, data.frame(m=m, trans=trans, dis=dis, repindex=repindex, method=method, t(p)))
+file.remove(paste(out_repindex, c(".bed", ".fam", ".log", ".bim", ".sim", ".simfreq", ".pheno", ".models.gz", ".cova", ".null_mean_effects.txt", ".null_variance_effects.txt"), sep=""))
+}
+
+write.table(ps, paste(out,".txt", sep=""), sep="\t", col.names=T, row.names=F, quote=F)
+```
+
+Plot the figure
+
+```{r, eval=FALSE}
+source("comfun_file.R")
+rep=1000
+fprpower = "single"   ### single-SNP level or multiple-SNP level
+outfolder="results/plot/"
+mydircreate(outfolder)
+
+for(mscalar in c(1, 10, 20)){
+res = c()
+for(transmtd in c("hlm_int", "hlm_crt", "lev_int", "lev_crt")){
+for(dis in c(1,2,4,5,7)){
+method = strsplit(transmtd, "_")[[1]][1]
+trans = strsplit(transmtd, "_")[[1]][2]
+#dis=1; method="lev"; trans="raw"; mscalar=50
+m=mscalar*4
+data = fread_batch(paste("results/sim/sim_multi_dis", dis, "_method-", method, "_trans-", trans, "_mscalar", mscalar,"_sample10000_5sdstepFALSE.txt",sep=""))
+
+if(fprpower == "multi"){
+res = rbind(res, data.frame(dis, method, trans, mscalar,
+    nei = narmsum(apply(data %>% select(paste("X",1:mscalar,sep=""))<(0.05/m), 1 , narmsum) != 0)/rep,
+    var = narmsum(unlist(data %>% select(paste("X", (mscalar+1):(2*mscalar), sep="")) < (0.05/m))) / rep / mscalar,
+    mean = narmsum(apply(data %>% select(paste("X", (2*mscalar+1):(3*mscalar), sep=""))<(0.05/m), 1 , narmsum) != 0)/rep,
+    both= narmsum(unlist(data %>% select(paste("X", (3*mscalar+1):(4*mscalar), sep="")) < (0.05/m))) / rep / mscalar))
+}else if(fprpower == "single"){
+res = rbind(res, data.frame(dis, method, trans, mscalar,
+    nei = fpr(unlist(data %>% select(paste("X",1:mscalar,sep="")))),
+    var = fpr(unlist(data %>% select(paste("X", (mscalar+1):(2*mscalar), sep="")))),
+    mean = fpr(unlist(data %>% select(paste("X", (2*mscalar+1):(3*mscalar), sep="")))),
+    both= fpr(unlist(data %>% select(paste("X", (3*mscalar+1):(4*mscalar), sep=""))))))
+}}}
+
+library(ggplot2);library(tidyr)
+res = res %>% gather(key="type", value="rate", nei, var, mean, both) %>% mutate(method2=paste(method, trans, sep="_"))
+res$method2 = as.factor(res$method2); res$method2 = factor(res$method2, levels = levels(res$method2)[4:1])
+res$type = as.factor(res$type); res$type = factor(res$type, levels = levels(res$type)[c(3,2,4,1)])
+p2 = ggplot(res, aes(x = as.character(dis), y=rate, fill=as.character(dis))) +
+     geom_bar(stat="identity") +  ylab("Positive Rate") + xlab("categories") + ggtitle(paste(4*mscalar," SNPs model",sep="")) +
+    facet_grid(type~method2) +
+    scale_fill_brewer(name="distribution",labels=c("normal","t,df=10","t,df=3","chisq,df=15","chisq,df=1")) +
+    theme(axis.text.x = element_blank()) +
+    ylim(0,1) +
+    geom_hline(yintercept = 0.05)
+ggsave(paste(outfolder, "plot_fpr-power_", fprpower,"_mscalar", mscalar, ".pdf", sep=""), p2, device="pdf", width=3.5, height=5)
+}
+```
+
+### Results: Genome-wide vQTL analysis for 13 UKB traits
+
+#### Phenotype process
+
+```{r, eval=FALSE}
+eurufamfile = "ukbEURu_imp_chr1_v3_impQC.fam"
+pheno1file = "9280_12505_UKBiobank_QT_051017.tab"
+pheno2file = "covar_sex_age_10PCs.txt"
+pheno3file = "9280_12505_UKBiobank_APOE_010518.tab"   ### Pulse rate (data field 102)
+
+library(dplyr)
+library(data.table)
+
+### read files
+eurufam = fread(eurufamfile) ## 348501      6
+pheno1 = fread(pheno1file)   ## 502629     28
+pheno2 = fread(pheno2file)   ## 455607     14
+pheno3 = fread(pheno3file)   ## 502616    273
+
+### rename the columns
+phenoname = c("HGSL","HGSR","WC","HC","HT","hBMD","EA","Bald","AMena","AFLB","FVC","FEV","PEF","AMeno","DBP","SBP","PR","FIS","BW","MTCIM","NTS","BMI","WT","BFP","BMR")
+names(pheno1) = c("FID","Sex","YOB", phenoname)
+
+### add phenotype
+pheno1 = pheno1 %>% mutate(WHR=WC/HC, FFR=FEV/FVC, WHRadjBMI=resid(lm(WHR~BMI, na.action=na.exclude)), HTsq=HT^2, HTcube=HT^3)
+phenoname = c(phenoname, "WHR", "FFR", "WHRadjBMI", "HTsq", "HTcube")
+pheno1 = left_join(pheno1, pheno3 %>% select(FID="f.eid",PR102="f.102.0.0"), by=c("FID"="FID"))
+phenoname = c(phenoname, "PR102" )
+
+### merge files
+pheno_euru = pheno1 %>% filter(FID %in% eurufam$"V1")  ## 348501     34
+pheno = left_join(pheno_euru, pheno2, by="FID")        ## 348501     47
+#pheno_euru = pheno1[pheno1$"FID" %in% eurufam$"V1"]  ## 348572     28
+#pheno = merge(pheno_euru,pheno2,by.x="FID",by.y="FID") ## 347997     41
+
+### mark "dont know/prefer not to answer" NA
+### include: EA, Bald, AMena, AFLB, AMeno (categorical traits)
+### NOT include: hBMD, WHRadjBMI (continuous traits)
+data_na = pheno %>% mutate_at(vars(phenoname[phenoname %in% c("EA", "Bald", "AMena", "AFLB", "AMeno")]),funs(ifelse(.<0,NA,.))) %>% select(phenoname)
+names(data_na) = paste(phenoname,"na",sep="_")
+data = bind_cols(pheno, data_na)
+
+### regressing out age and PCs
+data_nacrt = data %>%
+    group_by(Sex.x) %>%
+    transmute_at(vars(paste(phenoname,"na",sep="_")),funs(tryCatch(resid(lm(.~YOB+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10, na.action=na.exclude)), error=function(e) NA))) %>%
+    ungroup() %>%
+    select(paste(phenoname,"na",sep="_"))
+names(data_nacrt) = paste(phenoname, "nacrt",sep="_")
+data = bind_cols(data, data_nacrt)
+
+data_crtscl = data %>%
+    group_by(Sex.x) %>%
+    transmute_at(vars(paste(phenoname,"nacrt",sep="_")),funs(scale(.))) %>%
+    ungroup() %>%
+    select(paste(phenoname,"nacrt",sep="_"))
+names(data_crtscl) = paste(phenoname,"crtscl",sep="_")
+data = bind_cols(data, data_crtscl)
+
+### INT (inverse-normal transformation) and scale
+data_intscl = data %>% 
+    group_by(Sex.x) %>%
+    transmute_at(vars(paste(phenoname,"crtscl",sep="_")),funs(qnorm((rank(., na.last="keep")-0.5)/sum(!is.na(.))))) %>%
+    mutate_all(funs(scale(.))) %>%
+    ungroup() %>%
+    select(paste(phenoname,"crtscl",sep="_"))
+names(data_intscl) = paste(phenoname,"intscl",sep="_")
+
+### remove traits 5 s.d. away
+data_5sdscl = data %>%
+    group_by(Sex.x) %>%
+    transmute_at(vars(paste(phenoname,"crtscl",sep="_")),funs(ifelse(abs(.-mean(.,na.rm=T))>5*sd(.,na.rm=T),NA,.))) %>%
+    mutate_all(funs(scale(.))) %>%
+    ungroup() %>%
+    select(paste(phenoname,"crtscl",sep="_"))
+names(data_5sdscl) = paste(phenoname,"5sdscl",sep="_")
+data = bind_cols(data, data_intscl, data_5sdscl)
+
+### save the results
+write.table(cbind(data %>% select("FID", "IID"), data %>% select(-FID,-IID)), "9280_12505_UKBiobank_QT_051017.fullpheno",sep="\t",quote=FALSE,row.names=F)
+write.table(data %>% select(c("FID","IID",paste(phenoname,"na",sep="_"))), "9280_12505_UKBiobank_QT_051017.napheno",sep="\t",quote=FALSE,row.names=F)
+write.table(data %>% select(c("FID","IID",paste(phenoname,"nacrt",sep="_"))), "9280_12505_UKBiobank_QT_051017.nacrtpheno", sep="\t",quote=FALSE,row.names=F)
+write.table(data %>% select(c("FID","IID",paste(phenoname,"crtscl",sep="_"))), "9280_12505_UKBiobank_QT_051017.crtsclpheno", sep="\t",quote=FALSE,row.names=F)
+write.table(data %>% select(c("FID","IID",paste(phenoname,"intscl",sep="_"))), "9280_12505_UKBiobank_QT_051017.intsclpheno", sep="\t",quote=FALSE,row.names=F)
+write.table(data %>% select(c("FID","IID",paste(phenoname,"5sdscl",sep="_"))), "9280_12505_UKBiobank_QT_051017.5sdsclpheno", sep="\t",quote=FALSE,row.names=F)
+```
+
+#### Calculate the effective number of 13 traits
+
+```{r, eval=FALSE}
+library(data.table)
+library(dplyr)
+phenofull = fread("9280_12505_UKBiobank_QT_051017.fullpheno")
+phenonames = c("WC", "HC", "HT", "hBMD", "FVC", "FEV", "BW", "BMI", "BFP", "BMR", "WHR", "FFR", "WHRadjBMI")
+pheno = phenofull %>% select(paste(phenonames,"_5sdscl",sep=""))
+names(pheno) = sapply(strsplit(names(pheno),"_"), function(x) x[[1]][1])
+cormatrix = cor(pheno,use="pairwise.complete.obs")
+eigenvalues = eigen(cormatrix)$values
+m_eff = sum(eigenvalues)^2/sum(eigenvalues^2)
+print(m_eff)
+```
+
+#### make a bod file for software [osca](https://cnsgenomics.com/software/osca/#MakeaBODfile)
+
+
+```{bash, eval=FALSE}
+osca=osca_v0.43/osca_Linux
+for phenofile in 9280_12505_UKBiobank_QT_051017*pheno
+do
+out=`basename $phenofile`_befile
+${osca} --efile $phenofile  --gene-expression --make-bod --out $out
+done
+```
+
+#### Plot the heatmap of phenotipic correlations
+
+```{r, eval=FALSE}
+library(data.table)
+library(dplyr)
+pheno = fread("../Phenotype_process3/9280_12505_UKBiobank_QT_051017.fullpheno")
+phenonames = c("WC", "HC", "HT", "hBMD", "FVC", "FEV", "BW", "BMI", "BFP", "BMR", "WHR", "FFR", "WHRadjBMI")
+rawphen = pheno %>% select(paste(phenonames,"_5sdscl",sep=""))
+names(rawphen) = sapply(strsplit(names(rawphen),"_"), function(x) x[[1]][1])
+rawcor = cor(rawphen,use="pairwise.complete.obs")
+horder = hclust(dist(rawcor))$order
+rawcor_od = rawcor[horder,horder, drop=F]
+
+pdf("phen_cor_hist.pdf",width=6,height=6)
+odiag = c()
+for(i in 1:nrow(rawcor)){for(j in 1:ncol(rawcor)){if(i>j){odiag = c(odiag, rawcor[i,j])}}}
+hist(odiag, main="Histogram of Phenotypic Correlation", xlab="phenotypic correlation")
+dev.off()
+
+pdf("phen_cor_heatmap.pdf",width=8,height=6)
+myimage = function(data,minvalue,maxvalue,collist){
+  data[data>maxvalue] = maxvalue
+  data[data<minvalue] = minvalue
+  data = cbind(data, maxvalue, minvalue)
+  data_arr = as.matrix(t(data[nrow(data):1,,drop=FALSE]))
+  layout(matrix(1:2,1,2),c(4,1))
+  image(data_arr,xaxt='n', yaxt="n", xlab="",ylab="", col=colorRampPalette(collist)(100)); box()
+  title(main="Phenotypic Correlation")
+  axis(side=2,at=seq(from=1,to=0,length.out=nrow(data)),labels=rownames(data),las=1)
+  axis(side=1,at=seq(from=0,to=1,length.out=ncol(data)),labels=colnames(data),las=3)
+  image(matrix(seq(from=minvalue, to=maxvalue,length.out=100),1,100),col=colorRampPalette(collist)(100), xaxt='n', yaxt="n",xlab="",ylab=""); box()
+  axis(side=2,at=c(0,1),labels=c(minvalue,maxvalue),las=1, tick=F) 
+  title(ylab="correlation coefficient", mgp=c(0,1,0))
+}
+
+myimage(rawcor_od, -1, 1, collist=c("blue","white","red"))
+dev.off()
+```
+
+#### Plot the histograms of phenotype values
+
+```{r, eval=FALSE}
+library(data.table)
+library(dplyr)
+data = fread("9280_12505_UKBiobank_QT_051017.fullpheno")
+
+#phenoname = c("HGSL","HGSR","WC","HC","HT","hBMD","EA","Bald","AMena","AFLB","FVC","FEV","PEF","AMeno","DBP","SBP","PR","FIS","BW","MTCIM","NTS","BMI","WT","BFP","BMR","WHR")
+phenoname = c("WC","HC","HT","hBMD","FVC","FEV","BW","BMI","BFP","BMR","WHR","FFR","WHRadjBMI", "PR", "PR102")
+process = c("_na", "_5sdscl")
+
+for(i in 1:length(phenoname)){
+onephen = phenoname[i]
+for(oneprocess in process){
+### for each phenotype and process
+cat(paste("plotting the distribution of ", oneprocess, " phenotype ",onephen," ...\n",sep=""))
+png(paste("trait",i,"_hist_",onephen, oneprocess, ".png",sep=""),width=600, height=450)
+onedata = data %>% select(paste(onephen,oneprocess,sep=""))
+
+hist(unlist(onedata),xlab=onephen,main="", breaks=100)
+
+dev.off()
+}}
+```
+
+
+#### Extract the common (MAF>=0.05) SNPs
+
+```{bash, eval=FALSE}
+chr=$1
+bfile=ukbEURu_imp_chr${chr}_v3_impQC
+outfolder=v3EURu_impQC_snp_maf0.05/
+out=${outfolder}`basename $bfile`_snp_maf0.05
+
+mkdir -p $outfolder
+
+plink2 --bfile $bfile --snps-only --maf 0.05 --make-bed --out ${out}
+```
+
+#### The inflation due to outliers shown in Fig. S3a
+
+```{r, eval=FALSE}
+library(data.table);library(dplyr);library(ggplot2)
+source("comfun_file.R")
+
+snp = "rs11102024"
+chr = 1
+traitname = "FVC"
+bfile = paste("ukbEURu_imp_chr", chr, "_v3_impQC", sep="")
+phenofile = "9280_12505_UKBiobank_QT_051017.fullpheno"
+
+out = paste("outlier_", traitname, "_chr", chr, "_", snp, ".png", sep="")
+
+png(out,  width = 4, height = 4, units = 'in', res = 600)
+data = extractgenopheno(bfile, snpvector=as.vector(snp), phenofile=phenofile, phenoname=paste(traitname, "_crtscl", sep=""))
+g=data[,snp]; y=data[,"pheno"]
+boxplot(y~g, xlab="Genotype", ylab="Phenotype", col=c("red", "green", "blue"))
+dev.off()
+```
+
+#### vQTL analysis using osca
+
+```{bash, eval=FALSE}
+chr=$1
+taskid=$2
+tasktotal=30
+pheno=$3
+outputfolder=results_${pheno}/chrom-sep/
+
+mkdir -p ${outputfolder}
+
+
+bfile=ukbEURu_imp_chr${chr}_v3_impQC_snp_maf0.05
+befile=9280_12505_UKBiobank_QT_051017.${pheno}pheno_befile
+out=${outputfolder}`basename $bfile`_`basename $befile`_method2
+
+osca=osca_v0.43/osca_Linux
+
+echo `date`"Running osca in host "`hostname`" ..."
+
+${osca} --bfile $bfile --befile $befile --vqtl --vqtl-mtd 2 --out $out --task-num ${tasktotal} --task-id ${taskid}
+```
+
+#### Clumpping using PLINK2
+
+```{bash, eval=FALSE}
+chr=$1
+pheno=$2
+for taskid in 3 4 5 6 11 12 19 22 24 25 26 27 28 29 30;do
+plink2=plink
+bfile=ukbEURu_imp_chr${chr}_v3_impQC_snp_maf0.05
+vqtlfile=results_${pheno}/chrom-sep-gwas/ukbEURu_imp_chr${chr}_v3_impQC_snp_maf0.05_9280_12505_UKBiobank_QT_051017.${pheno}pheno_befile_method2_30_${taskid}.ma
+pvalue=2e-9
+out=results_${pheno}/chrom-sep-gwas-clump/`basename $vqtlfile`_maf0.05_p${pvalue}
+
+mkdir -p results_${pheno}/chrom-sep-gwas-clump/
+$plink2 --bfile $bfile --clump $vqtlfile --out ${out} --clump-p1 ${pvalue} --clump-p2 ${pvalue} --clump-r2 0.01 --clump-kb 5000 --clump-snp-field SNP --clump-field p
+done
+```
+
+#### Locusplots using standalone locuszoom software
+
+```{bash, eval=FALSE}
+module load python/2.7.12
+
+pheno=5sdscl
+traitid=$1
+traitname=`awk -v T=${traitid} '$2==T{print $1}' trait_list.txt`
+snp=$2
+chr=$3
+start=$4
+end=$5
+mafile=ukbEURu_imp_chr${chr}_v3_impQC_snp_maf0.05_9280_12505_UKBiobank_QT_051017.${pheno}pheno_befile_method2_28_${traitid}_gc.ma
+#flank=800000
+mafile=ukbEURu_imp_chr${chr}_v3_impQC_snp_maf0.05_9280_12505_UKBiobank_QT_051017.${pheno}pheno_befile_method2_28_${traitid}_gc.ma
+prefix=`basename $mafile`_chr${chr}_start${start}_end${end}
+date=`date "+%y%m%d"`
+out=${prefix}_${date}_${snp}
+
+mkdir -p results_${pheno}/plot_locus/
+
+echo "============"`date`"=============="
+echo "plotting the locus plot for trait " $traitname "(" $traitid ") and SNP " $snp " on chromsome " $chr " ..."
+
+locuszoom --metal $mafile \
+    --markercol SNP \
+    --pvalcol p \
+    --refsnp $snp \
+    --chr $chr --start $start --end $end \
+    --pop EUR \
+    --build hg19 \
+    --source 1000G_Nov2014 \
+    --prefix $prefix \
+    --cache None \
+    title = "${traitname}_${pheno}"
+#    --chr $chr --start $start --end $end \
+#    --flank ${flank} \
+
+## rename the name
+pdf=`ls ${out}/*pdf`
+mv $pdf ${out}.pdf
+rm -rf ${out}
+```
+
+#### Manhaton plot
+
+```{r, eval=FALSE}
+library(data.table);library(gridExtra);library(dplyr)
+library(ggplot2);library(ggrepel)
+source("comfun_file.R")
+
+man = function(traitid, pheno, p1, p2, traitname, ylimit){
+### read vQTL assoication file: .ma
+### read top SNP file: .clumped.nst
+### ma file doesn't contain BP, so we need the esi/bim files
+chrpatn="[0-9][0-9]*"
+mafiles=list.files(path=paste("results_",pheno,"/chrom-sep-gwas/",sep=""),
+    pattern=paste("ukbEURu_imp_chr",chrpatn,"_v3_impQC_snp_maf0.05_9280_12505_UKBiobank_QT_051017.",pheno,"pheno_befile_method2_28_",traitid,".ma",sep=""), full.names =T)
+bims=list.files(path="",
+    pattern=paste("ukbEURu_imp_chr",chrpatn,"_v3_impQC_snp_maf0.05.bim",sep=""), full.names=T)
+
+sumvqtl = fread("summary-vqtl.txt")
+topsnps = sumvqtl$"SNP"[sumvqtl$traitid == traitid]
+
+data1 = fread_batch(mafiles)
+data2 = fread_batch(bims)
+data = inner_join(data1,data2,by=c("SNP" = "V2"))
+colnames(data)[7] = "P"
+colnames(data)[9] = "CHR"
+colnames(data)[11] = "BP"
+
+don <- data %>% 
+  group_by(CHR) %>% summarise(chr_len=max(BP)) %>%                  # Compute chromosome size
+  mutate(tot=cumsum(chr_len)-chr_len) %>% select(-chr_len) %>%      # Calculate cumulative position of each chromosome
+  left_join(data, ., by=c("CHR"="CHR")) %>%                         # Add this info to the initial dataset
+  arrange(CHR, BP) %>% mutate( BPcum=BP+tot) %>%                    # Add a cumulative position of each SNP$
+  mutate( is_highlight=ifelse(P<p1, "yes", "no")) %>%       # Add highlight and annotation information
+  mutate( is_annotate = ifelse(SNP %in% topsnps, "yes", "no")) %>%
+  mutate(P = ifelse(P<=10^(-ylimit),10^(-ylimit),P))
+axisdf = don %>% group_by(CHR) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+p = ggplot(don, aes(x=BPcum, y=-log10(P))) +
+  geom_point( aes(color=as.factor(CHR)), alpha=0.8, size=0.3) +     # Show all points
+  #geom_label_repel( data=subset(don, is_annotate=="yes"), aes(label=SNP), size=2) +
+  geom_hline(yintercept = -log10(p1), linetype=1) + geom_hline(yintercept = -log10(p2), linetype=2) +
+  xlab("") + ylab("") +
+  scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
+  scale_x_continuous(label = axisdf$CHR, breaks= axisdf$center ) +  # custom X axis
+  scale_y_continuous(limits=c(0,ylimit) ) +                         # remove space between plot area and x axis
+  geom_point(data=subset(don, is_highlight=="yes"), color="orange", size=1) +                   # Add highlighted points
+  geom_point(data=subset(don, is_annotate=="yes"), color="black", fill="orange", size=2, shape=23) +
+  theme_bw() +                                                      # Custom the theme
+  theme( 
+    legend.position="none",
+    #panel.border = element_blank(),
+    panel.grid = element_blank(),
+    #panel.grid.major.x = element_blank(),
+    #panel.grid.minor.x = element_blank(),
+    axis.text = element_blank(),
+    plot.title = element_text(hjust = 0.5))
+return(p)
+}
+
+outfolder="results_5sdscl/plot_qqman/"
+dir.create(outfolder, showWarnings = FALSE, recursive = TRUE)
+
+args <- commandArgs(TRUE)
+index = as.integer(args[1])
+out = paste(outfolder, "manplot_",index,".png",sep="")
+
+traitids=c(5,11,12,27,6,19,22,3,4,26,28,24,25,29,30)
+traitnames = c("HT","FVC","FEV","FFR","BMD","BW","BMI","WC","HC","WHR","WHRadjBMI","BFP","BMR", "HTsq", "HTcube")
+p1=1.99e-9;p2=1e-8
+g = man(traitid=traitids[index], pheno="5sdscl", p1=p1, p2=p2, traitname=traitnames[index],ylimit=25)
+
+ggsave(out, g, device="png", height=2.5,width=5, dpi=600)
+```
+
+### Results: GWAS analysis for the 13 UKB traits
+
+#### GWAS analysis using PLINK2
+
+```{bash, eval=FALSE}
+chr=$1
+taskid=$2
+pheno=$3
+plink2=plink
+
+outfolder=results_${pheno}/chrom-sep/
+
+mkdir -p $outfolder
+
+bfile=v3EURu_impQC_snp_maf0.05/ukbEURu_imp_chr${chr}_v3_impQC_snp_maf0.05
+pheno=Phenotype_process3/9280_12505_UKBiobank_QT_051017.${pheno}pheno
+out=${outfolder}`basename $bfile`_`basename $pheno`_${taskid}
+
+${plink2} --bfile $bfile --pheno $pheno --assoc --mpheno $taskid --out $out
+```
+
+#### Sunset plots shown in Fig. 4
+
+```{r, eval=FALSE}
+source("comfun_file.R")
+
+traitids=c(5,11,12,27,6,19,22,3,4,26,28,24,25)
+traitnames = c("HT","FVC","FEV","FFR","BMD","BW","BMI","WC","HC","WHR","WHRadjBMI","BFP","BMR")
+i = 8; traitid = traitids[i]; traitname=traitnames[i]
+#p1=1.99e-9; p2=1e-8
+
+outfolder="results_5sdscl/plot_qqman_vqtl_gwas/"
+mydircreate(outfolder)
+out = paste(outfolder, traitname,"_vqtl_gwas_sunset.png",sep="")
+
+mafiles = paste("ukbEURu_imp_chr", 1:22, "_v3_impQC_snp_maf0.05_9280_12505_UKBiobank_QT_051017.5sdsclpheno_befile_method2_28_", traitid, ".ma", sep="")
+qassocfiles = paste("ukbEURu_imp_chr", 1:22, "_v3_impQC_snp_maf0.05_9280_12505_UKBiobank_QT_051017.5sdsclpheno_", traitid, ".qassoc", sep="")
+data1 = fread_batch(mafiles)
+data2 = fread_batch(qassocfiles)
+data = inner_join(data1,data2,by=c("SNP" = "SNP"))
+
+don <- data %>% 
+  group_by(CHR) %>% summarise(chr_len=max(BP)+2e7) %>%                  # Compute chromosome size
+  mutate(tot=cumsum(chr_len)-chr_len) %>% select(-chr_len) %>%      # Calculate cumulative position of each chromosome
+  left_join(data, ., by=c("CHR"="CHR")) %>%                         # Add this info to the initial dataset
+  arrange(CHR, BP) %>% mutate( BPcum=BP+tot) %>%                    # Add a cumulative position of each SNP$
+  mutate(ts_qtl=-log10(P), ts_sum=-log10(p)-log10(P))
+  #mutate(ts_qtl=ifelse(ts_qtl>50,50,ts_qtl), ts_sum=ifelse(ts_sum>50,50,ts_sum))
+
+sumvqtl = fread("~/scratch/vQTL/vQTL2/results_5sdscl/summary/summary-vqtl.txt")
+sumvqtl_trait = merge(sumvqtl %>% filter(Trait == traitname), don, by="SNP")
+axisdf = don %>% group_by(CHR) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+png(out, width = 10, height = 6, units = 'in', res = 600)
+plot(x=don$BPcum,y=don$ts_sum,col="white",xaxt='n',xlab="chromosome",ylab=expression('-log'[10]*'(P'[QTL]*') and -log'[10]*'(P'[vQTL]*')'))
+segments(x0=don$BPcum,y0=0,x1=don$BPcum,y1=don$ts_sum, col="red")
+segments(x0=don$BPcum,y0=0,x1=don$BPcum,y1=don$ts_qtl, col="blue")
+#text(x=sumvqtl_trait$BPcum, y=sumvqtl_trait$ts_sum, pos=sumvqtl_trait_pos, labels=sumvqtl_trait$NSTGENE, srt=90, cex=0.7)
+points(x=sumvqtl_trait$BPcum,y=sumvqtl_trait$ts_sum, pch = 23, cex=1.1, bg="orange", col="black")
+axis(side = 1, at = axisdf$center, labels = axisdf$CHR)
+dev.off()
+```
+
+#### COLOC and SMR analysis shown in Fig. S3c
+
+```{r, eval=FALSE}
+library(coloc);library(data.table);library(dplyr)
+
+bim = fread("ukbEURu_imp_chr16_v3_impQC.bim")
+regionsnps = bim$V2[bim$V4>5.36e7 & bim$V4<5.42e7]
+
+traitids = c(3, 4, 22, 24, 25)
+for(traitid1 in traitids){for(traitid2 in traitids){
+if(traitid1 > traitid2){
+print(paste("traitid 1: ", traitid1, "; traitid 2: ", traitid2, sep=""))
+vqtlmafile1=paste("ukbEURu_imp_chr16_v3_impQC_snp_maf0.05_9280_12505_UKBiobank_QT_051017.5sdsclpheno_befile_method2_28_", traitid1, ".ma", sep="")
+vqtlmafile2=paste("ukbEURu_imp_chr16_v3_impQC_snp_maf0.05_9280_12505_UKBiobank_QT_051017.5sdsclpheno_befile_method2_28_", traitid2, ".ma", sep="")
+vqtlma1 = fread(vqtlmafile1); vqtlma2 = fread(vqtlmafile2)
+data1 = vqtlma1 %>% transmute(pvalues=p, N=n, MAF=freq, beta=b, varbeta=se^2, type="quant", snp=SNP)
+data2 = vqtlma2 %>% transmute(pvalues=p, N=n, MAF=freq, beta=b, varbeta=se^2, type="quant", snp=SNP)
+
+
+resbuf2 = coloc.abf(data1[data1$snp %in% regionsnps,], data2[data2$snp %in% regionsnps,])
+print(resbuf2$summary[6])
+}}}
+```
+
+```{r, eval=FALSE}
+library(data.table);library(dplyr)
+
+smr = "smr_v1.0/smr_Linux"
+ldref = "ukbEURu_imp_chr16_v3_impQC_10k_mac1"
+bim = fread("ukbEURu_imp_chr16_v3_impQC.bim")
+
+chr = 16; traitids = c(3, 4, 22, 24, 25)
+for(traitid in traitids){ for(traitid2 in traitids){
+if(traitid > traitid2){
+targetsnp = case_when(traitid==22 ~ "rs11642015", traitid==3 | traitid==4 ~ "rs1421085", traitid==24 ~ "rs62033406", traitid==25 ~ "rs1421085")
+targetsnpbp = bim$V4[bim$V2==targetsnp]
+
+cojomafile = paste("ukbEURu_imp_chr", chr, "_v3_impQC_snp_maf0.05_9280_12505_UKBiobank_QT_051017.5sdsclpheno_befile_method2_28_", traitid, ".ma", sep="")
+cojomafile2 = paste("ukbEURu_imp_chr", chr, "_v3_impQC_snp_maf0.05_9280_12505_UKBiobank_QT_051017.5sdsclpheno_befile_method2_28_", traitid2, ".ma", sep="")
+
+out = paste("smr_trait", traitid, "_trait", traitid2, sep="")
+outquery = paste(out, ".query", sep="")
+outbesd = paste(out, ".besd", sep="")
+outsmr = paste(out, ".smr", sep="")
+
+cojoma = fread(cojomafile)
+data = right_join(bim, cojoma, by=c("V2"="SNP"))
+data = data %>% transmute(SNP=V2, Chr=V1, BP=V4, A1=A1, A2=A2, Freq=freq, 
+                          Probe=paste("trait", traitid, sep=""), Probe_Chr=V1, Probe_bp=targetsnpbp, Gene = paste("trait", traitid, sep=""),   Orientation="NA", 
+                          b, se, p)
+write.table(data, outquery, sep="\t", col.names=T, row.names=F, quote=F)
+cmd = paste(smr," --qfile ", outquery, " --make-besd --out ", outbesd, sep="")
+system(cmd)
+cmd2 = paste(smr, " --bfile ", ldref, " --gwas-summary ", cojomafile2, " --beqtl-summary ", outbesd, "  --out ", outsmr, " --target-snp ", targetsnp, sep="")
+system(cmd2)
+}}}
+```
+### Results: vQTL and GEI
+
+#### GEI test
+
+```{r, eval=FALSE}
+source("comfun_file.R")
+
+### input settings
+args <- commandArgs(TRUE)
+repindex = args[1]
+sumfile = paste("summary-qtl-75_", repindex ,".txt", sep="")
+
+for(pheno in c("na", "5sdscl")){
+
+### out setting
+outfolder = "results/gxe_qtl/"
+dir.create(outfolder, showWarnings = F, recursive=T)
+out = paste(outfolder, "gxe_",basename(sumfile),"_", pheno, "pheno.txt", sep="")
+
+### environmental factors
+PAfile = "9280_12505_UKBiobank_PhysicalActivity_180118.pro.pheno"
+smokingfile = "Smoking_status_ever.txt"
+PA = fread(PAfile)
+smoking=fread(smokingfile)
+
+sumsig = fread(sumfile)
+
+res = c()
+for(sumindex in 1:nrow(sumsig)){
+### phenotype
+traitid = sumsig$traitid[sumindex]
+traitlist = fread("trait_list.txt")
+traitname = traitlist$V1[traitlist$V2 == traitid]
+phenofile = paste("9280_12505_UKBiobank_QT_051017.", pheno, "pheno", sep="")
+### genotype
+snp = sumsig$SNP[sumindex]
+chr = as.character(sumsig$CHR[sumindex])
+bfile = paste("ukbEURu_imp_chr", chr, "_v3_impQC_snp_maf0.05", sep="")
+genopheno = extractgenopheno(bfile, as.vector(snp), phenofile=phenofile, phenoname=paste(traitname, "_", pheno, sep=""))
+
+### gxe test
+data = merge(genopheno, PA, by="FID")
+data = merge(data, smoking, by="FID")
+data = data %>% mutate(IPAQG_ct = case_when(IPAQG_na == "h" ~ 3, IPAQG_na == "m" ~ 2, IPAQG_na == "l" ~ 1))
+
+res = rbind(res, data.frame(
+pheno=pheno, sumvqtlid = sumindex, traitid = traitid, CHR=chr, SNP=snp, BP=sumsig$BP[sumindex], NSTGENE=sumsig$NSTGENE[sumindex], traitname=traitname,
+Sex = gxe(data$pheno,data %>% select(snp),data$Sex,method=1),
+Age = gxe(data$pheno,data %>% select(snp),data$YOB,method=1),
+PA = gxe(data$pheno,data %>% select(snp), data$IPAQG_ct, method=1),
+SB = gxe(data$pheno,data %>% select(snp),data$TimeTCD_5sd,method=1),
+Smoking = gxe(data$pheno,data %>% select(snp),data$status_ever1, method=1)))
+}
+
+write.table(res, file=out, row.names=F, col.names=T, sep="\t", quote=F)
+}
+```
+
+#### Plot the heatmaps for GEI tests
+
+```{r, eval=FALSE}
+source("comfun_file.R")
+library(ggplot2)
+
+for(pheno in c("5sdscl", "na")){
+data = c()
+for(repindex in 1:1000){
+gxeqtl = fread(paste("results/gxe_qtl/gxe_summary-qtl-75_", repindex, ".txt_", pheno, "pheno.txt", sep=""))
+data = rbind(data, gxeqtl %>% mutate(repindex=repindex))
+}
+redline = ifelse(pheno=="5sdscl", 16, 21)
+
+### output settings
+outfolder = "results/plot/"
+mydircreate(outfolder)
+out = paste(outfolder, "gxe_qtl_distribution_",pheno, "pheno.pdf", sep="")
+
+pc = data %>% group_by(repindex) %>% summarise(pc = length(which(Sex<1.33e-4 | Age<1.33e-4 | PA<1.33e-4 | SB<1.33e-4 | Smoking<1.33e-4)))
+print(paste("mean: ", mean(pc$pc), "; sd: ", sd(pc$pc), sep=""))
+p = ggplot(pc) + geom_histogram(aes(x=pc), binwidth=1) +  geom_vline(xintercept=redline, colour="red") + xlim(-1,redline+3) + 
+    theme_bw() + xlab("The number of top SNPs") + ylab("Counts") + theme( panel.grid = element_blank(),panel.background = element_rect(fill = NA, colour = "black")) +
+    ggtitle(paste("mean=", mean(pc$pc), "; sd=", sd(pc$pc), sep=""))
+ggsave(out, p, device="pdf", width=4, height=3)
+}
+```
+
+### Discussion section
+
+#### Epistasis tests
+
+```{r, eval=FALSE}
+library(data.table);library(dplyr)
+
+args = commandArgs(trailingOnly=TRUE)
+sumvqtlindex = as.integer(args[1])
+for(scdchr in 1:22){
+
+outfolder = "results/plink2_epistasis/"
+dir.create(outfolder, showWarnings = F, recursive=T)
+out = paste(outfolder, "plink2_epistasis_vqtlindex", sumvqtlindex, "_scdchr", scdchr, sep="")
+
+sumvqtls = fread("summary-vqtl.txt")
+### phenotype
+traitid = sumvqtls$traitid[sumvqtlindex]
+traitlist = fread("trait_list.txt")
+traitname = traitlist$V1[traitlist$V2 == traitid]
+phenofile = "9280_12505_UKBiobank_QT_051017.5sdsclpheno"
+
+### SNP set
+snpsetout = paste(out, ".snpset", sep="")
+snp = sumvqtls$SNP[sumvqtlindex]
+snpset = data.frame(V1=c(paste("vqtlindex",sumvqtlindex,sep="_"), snp, "END"))
+write.table(snpset, snpsetout, col.names=F, row.names=F, quote=F, sep="\t")
+
+### genotype
+chr = as.character(sumvqtls$CHR[sumvqtlindex])
+bfile1 = paste("ukbEURu_imp_chr", chr, "_v3_impQC_snp_maf0.05", sep="")
+bfile2 = paste("ukbEURu_imp_chr", scdchr, "_v3_impQC_snp_maf0.05", sep="")
+
+### epistasis test
+if(chr == scdchr){
+cmd3 = paste("plink2 --bfile ", bfile1, " --pheno ", phenofile, " --pheno-name ", traitname, "_5sdscl --allow-no-sex --epistasis set-by-all --set ", out , ".snpset --epi1 1 --out ", out, sep="")
+system(cmd3)
+file.remove(snpsetout, showWarnings = F)
+
+}else{
+bfilemerge = paste(out,"_", basename(bfile1), "_", snp, "_", basename(bfile2), sep="")
+bfilesnp = paste(out, "_", snp, sep="")
+cmd1 = paste("plink2 --bfile ", bfile1, " --snp ", snp, " --make-bed --out ", bfilesnp, sep="")
+system(cmd1)
+cmd2 = paste("plink2 --bfile ", bfilesnp, " --bmerge ", bfile2, " --make-bed --out ", bfilemerge, sep="")
+system(cmd2)
+cmd3 = paste("plink2 --bfile ", bfilemerge, " --pheno ", phenofile, " --pheno-name ", traitname, "_5sdscl --allow-no-sex --epistasis set-by-all --set ", out , ".snpset --epi1 1 --out ", out, sep="")
+system(cmd3)
+file.remove(snpsetout, showWarnings = F)
+file.remove(paste(bfilesnp,  c(".log", ".nosex",".bed", ".fam", ".bim"), sep=""), showWarings=F)
+file.remove(paste(bfilemerge,  c(".log", ".nosex", ".bed", ".fam", ".bim"), sep=""), showWarings=F)
+}
+}
+```
+
+### Appendix: The R script comfun_file.R containing common functions needed by other R scripts
+
+```{r, eval=FALSE}
+library(data.table);library(dplyr);library(tidyr)
+
+### INT
+int = function(x){return(qnorm((rank(x,na.last="keep")-0.5)/sum(!is.na(x))))}
+
+### positive rate
+fpr = function(x) {sum(x<=0.05,na.rm=T)/length(which(!is.na(x)))}
+
+### lambda
+lambda_gc = function(pvalues) {qchisq(1-median(pvalues), 1)/qchisq(0.5,1)}
+
+### sum with na.rm=T
+narmsum = function(x) {sum(x, na.rm=T)}
+
+numscale = function(x) {
+if(sum(x==0)==length(x)){x}else{as.numeric(scale(x))}
+}
+
+mydircreate = function(foldername){
+dir.create(foldername, showWarnings = F, recursive = T)
+}
+
+### generate error terms with different distribution
+grt_err = function(n,sigma, dis){
+    ### dis=1: normal distribution
+    ### dis=2-4: t distirbution with df=10,5,3
+    ### dis=5-7; chisq distribution with df=15,5,1
+    if(dis==1){e = rnorm(n);escaled=(e-0)/1
+    }else if(dis==2){e = rt(n,10);escaled=(e-0)/sqrt(10/8)
+    }else if(dis==3){e = rt(n,5);escaled=(e-0)/sqrt(5/3)
+    }else if(dis==4){e = rt(n,3);escaled=(e-0)/sqrt(3/1)
+    }else if(dis==5){e = rchisq(n,15);escaled=(e-15)/sqrt(2*15)
+    }else if(dis==6){e = rchisq(n,5);escaled=(e-5)/sqrt(2*5)
+    }else if(dis==7){e = rchisq(n,1);escaled=(e-1)/sqrt(2*1)
+    }else{stop("ERROR: dis option can only be 1-7.")}
+    esigma = escaled*sigma
+    return(esigma)
+}
+
+gxe = function(y,g,e,method){
+### gxe test
+### paramter:
+###     y: the phenotype
+###     g: the genotype
+###     e: the environmental factor
+###     method: 1-multiple regression; 2: heterogeneity test (only for binary environmental factor)
+if(method==1){
+g2 = as.numeric(scale(g, scale=F))
+e2 = as.numeric(scale(e, scale=F))
+ge = g2*e2
+p = coefficients(summary(lm(y~g2+e2+ge)))[4,4]
+return(p)
+}else if(method==2){
+fit1 = lm( y[e == names(table(e))[1]] ~ g[e == names(table(e))[1]])
+fit2 = lm( y[e == names(table(e))[2]] ~ g[e == names(table(e))[2]])
+b1 = coefficients(summary(fit1))[2,1]; se1 = coefficients(summary(fit1))[2,2]
+b2 = coefficients(summary(fit2))[2,1]; se2 = coefficients(summary(fit2))[2,2]
+z = (b1-b2)/sqrt(se1^2+se2^2)
+p = 1-pchisq(z^2,df=1)
+return(p)
+}else{stop("The method option could only be 1 or 2!!!")}
+}
+
+vqtl_test = function(x,y,method){
+    ### method=1: Bartlett test
+    ### method=2: Levene test (mean-based)
+    ### method=3: Levene test (median-based)
+    ### method=4: Fligner-Killeen
+    ### method=5: Breusch-Pagan test
+    ### method=6: Double Generalized Linear Model
+    ### method=7: DGLM adj.P
+    suppressPackageStartupMessages(library(car))
+    suppressPackageStartupMessages(library(lmtest))
+    suppressPackageStartupMessages(library(dglm))
+    #nonaindex = which(!is.na(x) & !is.na(y))
+    #x = x[nonaindex]; y=y[nonaindex]
+    if(method==1){pvalue = tryCatch(bartlett.test(y~x)$"p.value", error=function(err) NA)
+    }else if(method==2){pvalue = tryCatch(leveneTest(y~as.factor(x), center = mean)$"P"[1], error=function(err) NA)
+    }else if(method==3){pvalue = tryCatch(leveneTest(y~as.factor(x), center = median)$"P"[1], error=function(err) NA)
+    }else if(method==4){pvalue = tryCatch(fligner.test(y~x)$"p.value", error=function(err) NA)
+    }else if(method==5){pvalue = tryCatch(bptest(y ~ x)$"p.value", error=function(err) NA)
+    }else if(method==6){pvalue = tryCatch(coefficients(summary(dglm(y~x,dformula=~x))$"dispersion.summary")[2,4], error=function(err) NA)
+    }else if(method==7){pvalue = tryCatch(anova.dglm(dglm(y~x,dformula=~x))$Adj.P[2], error=function(err) NA)
+    }else{stop("ERROR: method option can only be 1-7.")}
+    return(pvalue)
+}
+```
