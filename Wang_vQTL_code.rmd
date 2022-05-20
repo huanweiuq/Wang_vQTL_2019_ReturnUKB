@@ -1143,4 +1143,23 @@ vqtl_test = function(x,y,method){
     }else{stop("ERROR: method option can only be 1-7.")}
     return(pvalue)
 }
+
+simSNP = function(Nsnp, Nsample, MinMAF, MaxMAF){
+    if(Nsnp == 0){
+        maf = NULL
+        geno012 = NULL
+        genostd = NULL
+    }else if(Nsnp == 1){
+        maf = runif(Nsnp, min=MinMAF, max=MaxMAF)
+        geno012 = rbinom(Nsample, 2, maf)
+        genostd = (geno012 - 2*maf)/sqrt(2*maf*(1-maf))
+    }else{
+        maf = runif(Nsnp, min=MinMAF, max=MaxMAF)
+        geno012 = t(replicate(Nsample, rbinom(Nsnp, 2, maf)))
+        colnames(geno012) = paste("SNP", 1:Nsnp, sep="")
+        genostd = apply(rbind(geno012, maf), 2, function(x) (x-2*x[length(x)])/sqrt(2*x[length(x)]*(1-x[length(x)])))[1:Nsample,]
+    }
+    return(list(maf=maf, geno012=geno012,genostd=genostd))
+
+}
 ```
